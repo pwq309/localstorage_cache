@@ -1,0 +1,17 @@
+{
+  "name": "basket.js",
+  "main": "dist/basket.js",
+  "ignore": [
+    "_*",
+    ".*",
+    "asset",
+    "lib",
+    "media",
+    "test",
+    "Gruntfile.js",
+    "index.md",
+    "package.json"
+  ],
+  "dependencies": {
+  }
+}
