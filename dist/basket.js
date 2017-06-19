@@ -1,6 +1,6 @@
 /*!
 * basket.js
-* v0.5.2 - 2017-06-14
+* v0.5.2 - 2017-06-19
 * http://addyosmani.github.com/basket.js
 * (c) Addy Osmani;  License
 * Created by: Addy Osmani, Sindre Sorhus, Andrée Hansson, Mat Scales
@@ -15,110 +15,190 @@
 * 基于basket.js改造，去除RSVP.js依赖，减小体积
 */
 (function (window, document) {
-    'use strict';
+    // 'use strict';
 
     // var head = document.head || document.getElementsByTagName('head')[0];
     var body = document.body || document.getElementsByTagName('body')[0];
     var storagePrefix = 'BB-'; // 保存localStorage时的前缀
-    var defaultExpiration = 5000; // 默认过期时间为5000小时
+    // var defaultExpiration = 5000; // 默认过期时间为5000小时
     var inBasket = [];
 
     /**
      * ES5实现的类promise方法
      */
-    function MyPromise (fn) {
-        this.status = 'pending';
-        this.resolveFunc = function () {};
-        this.rejectFunc = function () {};
-        fn(this.resolve.bind(this), this.reject.bind(this));
+    function _microDefer(thisArg,cb,arr){
+        if(typeof MutationObserver == 'function'){
+        var ele=document.createElement("div");
+        new MutationObserver(function(){cb.apply(thisArg,arr);}).observe(ele,{attributes:true});
+        ele.setAttribute('change','yes');
+        }else if(typeof MessageChannel == 'function'){
+        var channel=new MessageChannel();
+        channel.port1.onmessage=function(){cb.apply(thisArg,arr);};
+        channel.port2.postMessage("trigger");
+        }else{
+        setTimeout(function(){cb.apply(thisArg,arr);},0);
+        }
+    };
+    function _placeholder_subprosCheck(promise_holder){//the only aim:check subPromise exist
+        //1.check placeholder
+        if(promise_holder.placeholder){
+        _ship(promise_holder.placeholder,promise_holder.result,promise_holder.state);
+        };
+        if(promise_holder.subPromiseArr.length){
+        _execThenOf(promise_holder);
+        }; 
+    };  
+    function _thenCallback_Exec(promise_holder,fatherPro){
+        //then's callback执行前，首先要对fatherPro的result检测，看是否为thenable
+        //而不是检测thenCb()的运行结果，thenCb的不用检查，要等到它的下一次then时再检测
+        var supResult,thenCb;
+        //select thenCb,supResult
+        supResult = fatherPro.result;
+        if(fatherPro.state == 'resolved'){
+        thenCb=promise_holder.fullfilFun;
+        }else{
+        thenCb=promise_holder.rejectFun;
+        }
+        //check thenCb null
+        if(typeof thenCb != 'function'){//延续祖辈的结果和状态
+        _ship(promise_holder,supResult,fatherPro.state);
+        return;
+        }
+        pro_air=thenCb(supResult);
+        if(pro_air instanceof promise_holder.constructor){
+        pro_air.placeholder=promise_holder;//do not delete:return chain
+        if(pro_air.state != 'pending'){
+            _ship(promise_holder,pro_air.result,pro_air.state);
+        }
+        }else{//pro_air is string/object/thenable
+        _ship(promise_holder,pro_air,'resolved');
+        }
+    } 
+    function _ship(promise_holder,result,state){
+        promise_holder.state=state;
+        promise_holder.result=result;
+        _placeholder_subprosCheck(promise_holder);
     }
-
-    MyPromise.prototype.resolve = function (val) {
-        var self = this;
-        if (this.status === 'pending') {
-            this.status = 'resolved';
-            this.value = val;
-            setTimeout(function () {
-                self.resolveFunc(self.value);
-            }, 0);
-        }
-    };
-
-    MyPromise.prototype.reject = function (val) {
-        var self = this;
-        if (this.status === 'pending') {
-            this.status = 'rejected';
-            this.value = val;
-            setTimeout(function () {
-                self.rejectFunc(self.value);
-            }, 0);
-        }
-    };
-
-    MyPromise.prototype.then = function (resolveFunc, rejectFunc) {
-        var self = this;
-        return new MyPromise(function (resolveNext, rejectNext) {
-            function resolveFuncWrap () {
-                var result = resolveFunc(self.value);
-                if (result && typeof result.then === 'function') {
-                    // 如果result是MyPromise对象，则通过then将resolveNext和rejectNext传给它
-                    result.then(resolveNext, rejectNext);
-                } else {
-                    // 如果result是其他对象，则作为参数传给resolveNext
-                    resolveNext(result);
-                }
+    function _execThenCb(thenCalledPro,sync){
+        //thenCalledPro:promise calling "then"
+        var thenCbArr,promise_holder;
+        var supResult = thenCalledPro.result;
+        if(supResult && typeof supResult.then == 'function' && !(supResult instanceof thenCalledPro.constructor)){
+        if(!thenCalledPro.resrej || thenCalledPro.state == 'resolved'){
+            var then_promise = new thenCalledPro.constructor(supResult.then);
+            then_promise.placeholder = thenCalledPro;
+            if(then_promise.state != 'pending'){
+            _ship(thenCalledPro,then_promise.result,then_promise.state);
             }
+            return;
+        }
+        };
+        //supResult:string/obj/(rej(thenable))
+        for(var i=0,len=thenCalledPro.subPromiseArr.length;i<len;i++){
+            promise_holder=thenCalledPro.subPromiseArr[i];
+            _thenCallback_Exec(promise_holder,thenCalledPro);
+        };
 
-            function rejectFuncWrap () {
-                var result = rejectFunc(self.value);
-                if (result && typeof result.then === 'function') {
-                    // 如果result是MyPromise对象，则通过then将resolveNext和rejectNext传给它
-                    result.then(resolveNext, rejectNext);
-                } else {
-                    // 如果result是其他对象，则作为参数传给resolveNext
-                    resolveNext(result);
-                }
-            }
-            self.resolveFunc = resolveFuncWrap;
-            self.rejectFunc = rejectFuncWrap;
+        thenCalledPro.subPromiseArr=[];
+    }
+    function _execThenOf(thenCalledPro){//async then calling
+        _microDefer(null,_execThenCb,[thenCalledPro,0]);
+    }
+    function _microThen(thisArg,f,r){//sync then calling
+        var promise_holder=new thisArg.constructor(),pro_air;
+        promise_holder.fullfilFun = f;
+        promise_holder.rejectFun = r;
+        thisArg.subPromiseArr.push(promise_holder);
+        _microDefer(null,_execThenCb,[thisArg,1]);
+        return promise_holder;//
+    }
+    function HiPromise(executor) {
+        this.state = "pending";
+        this.result = null;//only one-resolved/rejected
+        this.subPromiseArr = [];
+        this.placeholder=null;
+        if(!executor){//can aslo add '||typeof executor != "function"'
+            return;
+        };
+        var that = this,that_placeholder; 
+        function _resrej(result,state){
+            //_ship(that,result,state);
+            if(result instanceof that.constructor){
+            result.placeholder=that;//do not delete:return chain
+            if(state == 'rejected'){
+                _ship(that,result,'rejected');
+            }else if(state == 'resolved'){
+                _ship(that,result.result,result.state);
+            };
+            }else if(result && typeof result.then == 'function'){
+            that.resrej = true;
+            _ship(that,result,state);
+            }else{//pro_air is string/object
+            _ship(that,result,state);
+            };
+        };
+        //entry point
+        executor(function(e) {
+            _resrej(e,"resolved");
+        }, function(e) {
+            _resrej(e,"rejected");
         });
-    };
-
-    MyPromise.all = function (promises) {
-        if (!Array.isArray(promises)) {
-            throw new TypeError('You must pass an array to all.');
+    }
+    HiPromise.prototype.then = function(f, r) {
+        var result,thenGenePro;
+        //async:wait and _microDefer;
+        //sync:microDefer;
+        if(this.state == 'pending'){
+            thenGenePro=new this.constructor();
+            thenGenePro.fullfilFun = f;
+            thenGenePro.rejectFun = r;
+            this.subPromiseArr.push(thenGenePro);//async,we call this empty promise "promise_Holder".
+            return thenGenePro;
+        }else{
+            return _microThen(this,f,r);
         }
-        // 返回一个promise 实例
-        return new MyPromise(function (resolve, reject) {
-            var i = 0,
-                result = [],
-                len = promises.length,
-                count = len;
-
-            // 每一个 promise 执行成功后，就会调用一次 resolve 函数
-            function resolver (index) {
-                return function (value) {
-                    resolveAll(index, value);
-                };
+    };
+    HiPromise.prototype.catch=function(callback){
+        return this.then(null,callback);
+    };
+    //static methods
+    HiPromise.resolve=function(value){
+        if(value && typeof value=="object" && value.constructor==HiPromise){//Promise instance
+        return value;
+        }
+        return new HiPromise(function(res,rej){res(value);});//thenable obj or others
+    };
+    HiPromise.reject=function(reason){
+        return new HiPromise(function(res,rej){rej(reason);});
+    };
+    HiPromise.all=function(entities){
+        var allPromise = new HiPromise(function(res,rej){
+        var entityLen=entities.length;
+        var fullfilmentArr=[],rejectFlag=false,entitiesResNum=0;
+        for(var i=0;i<entityLen;i++){
+            if(rejectFlag){
+            break;
             }
-
-            function rejecter (reason) {
-                reject(reason);
-            }
-            // 存储每一个promise的参数
-            function resolveAll (index, value) {
-                // 等于0 表明所有的promise 都已经运行完成，执行resolve函数
-                result[index] = value;
-                if (--count === 0) {
-                    resolve(result);
+            function lcFun(n){//fix closure bug
+            entities[n].then(function(value){
+                if(!rejectFlag){
+                entitiesResNum+=1;
+                fullfilmentArr[n]=value;
+                if(entitiesResNum==entityLen){
+                    res(fullfilmentArr);
                 }
+                }
+            }).catch(function(reason){
+                if(!rejectFlag){
+                rejectFlag=true;
+                rej(reason);
+                }
+            });
             }
-            // 依次循环执行每个promise
-            // 若有一个失败，就执行rejecter函数
-            for (; i < len; i++) {
-                promises[i].then(resolver(i), rejecter);
-            }
+            lcFun(i);
+        }
         });
+        return allPromise;
     };
 
     /**
@@ -183,7 +263,7 @@
      * @returns {object}        返回promise对象，解决时的参数为对象：{content:'', type: ''}
      */
     var getUrl = function( url ) {
-        var promise = new MyPromise( function( resolve, reject ){
+        var promise = new HiPromise( function( resolve, reject ){
 
             var xhr = new XMLHttpRequest();
             xhr.open( 'GET', url );
@@ -226,9 +306,9 @@
         return getUrl( obj.url ).then( function( result ) {
             var storeObj = wrapStoreData( obj, result );
 
-            if (!obj.skipCache) {
-                addLocalStorage( obj.key , storeObj );
-            }
+            // if (!obj.skipCache) {
+            addLocalStorage( obj.key , storeObj );
+            // }
 
             return storeObj;
         });
@@ -245,9 +325,9 @@
         obj.data = data.content;
         obj.originalType = data.type;
         obj.type = obj.type || data.type;
-        obj.skipCache = obj.skipCache || false;
+        // obj.skipCache = obj.skipCache || false;
         obj.stamp = now;
-        obj.expire = now + ( ( obj.expire || defaultExpiration ) * 60 * 60 * 1000 );
+        // obj.expire = now + ( ( obj.expire || defaultExpiration ) * 60 * 60 * 1000 );
 
         return obj;
     };
@@ -260,9 +340,9 @@
      */
     var isCacheValid = function(source, obj) {
         return !source || // 没有缓存数据返回true
-            source.expire - +new Date() < 0  || // 超过过期时间返回true
-            obj.unique !== source.unique || // 版本号不同的返回true
-            (basket.isValidItem && !basket.isValidItem(source, obj)); // 自定义验证函数不成功的返回true
+            // source.expire - +new Date() < 0  || // 超过过期时间返回true
+            obj.unique !== source.unique; // || // 版本号不同的返回true
+            // (basket.isValidItem && !basket.isValidItem(source, obj)); // 自定义验证函数不成功的返回true
     };
 
     /**
@@ -279,39 +359,31 @@
 
         obj.key =  ( obj.key || obj.url );
 
+        console.log('load start:' + performance.now());   
+        window.loadStart = performance.now();   
         source = basket.get( obj.key );
-
-        obj.execute = obj.execute !== false;
+        // obj.execute = obj.execute !== false;
 
         shouldFetch = isCacheValid(source, obj); // 判断缓存是否还有效
 
         // 如果shouldFetch为true，请求数据，保存到ls（live选项意义不明，文档也没有说，这里当它一只是undefined）
-        if( obj.live || shouldFetch ) {
+        if( shouldFetch ) {
             if ( obj.unique ) {
                 // set parameter to prevent browser cache
                 obj.url += ( ( obj.url.indexOf('?') > 0 ) ? '&' : '?' ) + 'bb-unique=' + obj.unique;
             }
             promise = saveUrl( obj ); // 请求对应js，缓存到ls里
-
-            if( obj.live && !shouldFetch ) {
-                promise = promise
-                    .then( function( result ) {
-                        // If we succeed, just return the value
-                        // RSVP doesn't have a .fail convenience method
-                        return result;
-                    }, function() {
-                        return source;
-                    });
-            }
         } else {
         // 缓存可用。
             source.type = obj.type || source.originalType;
             source.execute = obj.execute;
-            promise = new MyPromise( function( resolve ){
+            promise = new HiPromise( function( resolve ){
                 resolve( source );
             });
         }
-
+        // injectScript( source );
+        window.loadEnd = performance.now();   
+        console.log('load end:' + performance.now());            
         return promise;
     };
 
@@ -327,28 +399,39 @@
         // which won't allow appending to a script
         script.text = obj.data;
         // head.appendChild( script );
+        console.log('append script:' + performance.now());            
         body.appendChild( script );
     };
 
+    /**
+     * 立即执行script
+     * @param {object} obj 缓存对象
+     */
+    // var executeScript = function( obj ) {
+    //     console.log('executeScript:' + performance.now());            
+    //     eval(obj.data);
+    // };
+
     // 保存着特定类型的执行函数，默认行为是把script注入到页面
-    var handlers = {
-        'default': injectScript
-    };
+    // var handlers = {
+    //     'default': injectScript,
+    //     'execute': executeScript
+    // };
 
     /**
      * 执行缓存对象对应回调函数，把script插入到head中
      * @param   {object}   obj 缓存对象
      * @returns {undefined}    不需要返回结果
      */
-    var execute = function( obj ) {
-        // 执行类型特定的回调函数
-        if( obj.type && handlers[ obj.type ] ) {
-            return handlers[ obj.type ]( obj );
-        }
+    // var execute = function( obj ) {
+    //     // 执行类型特定的回调函数
+    //     if( obj.type && handlers[ obj.type ] ) {
+    //         return handlers[ obj.type ]( obj );
+    //     }
 
-        // 否则执行默认的注入script行为
-        return handlers['default']( obj ); // 'default' is a reserved word
-    };
+    //     // 否则执行默认的注入script行为
+    //     return handlers['default']( obj ); // 'default' is a reserved word
+    // };
 
     /**
      * 批量执行缓存对象动作
@@ -357,10 +440,12 @@
      */
     var performActions = function( resources ) {
         return resources.map( function( obj ) {
-            if( obj.execute ) {
-                execute( obj );
-            }
-
+            // if( obj.execute ) {
+                console.log('执行插入缓存js:' + performance.now());
+                // execute( obj );
+                // handlers['default']( obj )
+                injectScript( obj );
+            // }
             return obj;
         } );
     };
@@ -376,7 +461,7 @@
         for ( i = 0, l = arguments.length; i < l; i++ ) {
             promises.push( handleStackObject( arguments[ i ] ) );
         }
-        return MyPromise.all( promises );
+        return HiPromise.all( promises );
     };
 
     /**
@@ -393,20 +478,25 @@
     // };
 
     window.basket = {
-        require: function() { // 参数为多个请求相关的对象，对象的属性：url、key、expire、execute、unique、once和skipCache等
+        require: function() { 
+            // 参数为多个请求相关的对象，对象的属性：url、key、expire、execute、unique、once和skipCache等
             // 处理execute参数
-            for ( var a = 0, l = arguments.length; a < l; a++ ) {
-                arguments[a].execute = arguments[a].execute !== false; // execute 默认选项为ture
+            // for ( var a = 0, l = arguments.length; a < l; a++ ) {
+            //     arguments[a].execute = arguments[a].execute !== false; // execute 默认选项为ture
                 
-                // 如果有只执行一次的选项once，并之前已经加载过这个js，那么设置execute选项为false
-                if ( arguments[a].once && inBasket.indexOf(arguments[a].url) >= 0 ) {
-                    arguments[a].execute = false;
-                // 需要执行的请求的url保存到inBasket，
-                } else if ( arguments[a].execute !== false && inBasket.indexOf(arguments[a].url) < 0 ) {  
-                    inBasket.push(arguments[a].url);
+            //     // 如果有只执行一次的选项once，并之前已经加载过这个js，那么设置execute选项为false
+            //     if ( arguments[a].once && inBasket.indexOf(arguments[a].url) >= 0 ) {
+            //         arguments[a].execute = false;
+            //     // 需要执行的请求的url保存到inBasket，
+            //     } else if ( arguments[a].execute !== false && inBasket.indexOf(arguments[a].url) < 0 ) {  
+            //         inBasket.push(arguments[a].url);
+            //     }
+            // }
+            for ( var a = 0, l = arguments.length; a < l; a++ ) {
+                if ( inBasket.indexOf(arguments[0].url) < 0 ) {  
+                    inBasket.push(arguments[0].url);
                 }
             }
-
             var promise = fetch.apply( null, arguments ).then( performActions );
 
             // promise.thenRequire = thenRequire;
@@ -420,51 +510,53 @@
 
         // 根据key值获取对应ls的value
         get: function( key ) {
-
             var item = localStorage.getItem( storagePrefix + key );
             try {
                 return JSON.parse( item || 'false' );
+                // return item || 'false';
             } catch( e ) {
                 return false;
             }
         },
 
         // 批量清除缓存对象，传入true只清除过期对象
-        clear: function( expired ) {
-            var item, key;
-            var now = +new Date();
+        // clear: function( expired ) {
+        //     var item, key;
+        //     var now = +new Date();
 
-            for ( item in localStorage ) {
-                key = item.split( storagePrefix )[ 1 ];
-                if ( key && ( !expired || this.get( key ).expire <= now ) ) {
-                    this.remove( key );
-                }
-            }
+        //     for ( item in localStorage ) {
+        //         key = item.split( storagePrefix )[ 1 ];
+        //         if ( key && ( !expired || this.get( key ).expire <= now ) ) {
+        //             this.remove( key );
+        //         }
+        //     }
 
-            return this;
-        },
+        //     return this;
+        // },
 
-        isValidItem: null, // 可以自己扩展一个isValidItem函数，来自定义判断缓存是否过期。
+        // isValidItem: null, // 可以自己扩展一个isValidItem函数，来自定义判断缓存是否过期。
 
         timeout: 5000, // ajax 默认的请求timeout为5s
 
         // 添加特定类型的执行函数
-        addHandler: function( types, handler ) {
-            if( !Array.isArray( types ) ) {
-                types = [ types ];
-            }
-            types.forEach( function( type ) {
-                handlers[ type ] = handler;
-            });
-        },
+        // addHandler: function( types, handler ) {
+        //     if( !Array.isArray( types ) ) {
+        //         types = [ types ];
+        //     }
+        //     types.forEach( function( type ) {
+        //         handlers[ type ] = handler;
+        //     });
+        // },
 
-        removeHandler: function( types ) {
-            basket.addHandler( types, undefined );
-        }
+        // removeHandler: function( types ) {
+        //     basket.addHandler( types, undefined );
+        // }
     };
 
     // delete expired keys
     // basket.js 加载时会删除过期的缓存
-    basket.clear( true );
+    // 高耗时操作！！性能好的手机耗时50ms，性能差的手机耗时200ms！！
+    // 用版本号管理本地缓存，可以不做此操作！！
+    // basket.clear( true );
 
 })( this, document );

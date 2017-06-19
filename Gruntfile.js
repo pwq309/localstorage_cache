@@ -40,7 +40,7 @@ module.exports = function( grunt ) {
 					sourceMap: 'dist/basket.full.map'
 				},
 				files: {
-					'dist/basket.full.min.js': ['dist/basket.js']
+					'dist/basket.full.min.js': ['bower_components/rsvp/rsvp.min.js', 'dist/basket.js']
 				}
 			}
 		},
