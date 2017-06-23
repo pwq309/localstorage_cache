@@ -1,6 +1,6 @@
 /*!
 * basket.js
-* v0.5.2 - 2017-06-19
+* v0.5.2 - 2017-06-23
 * http://addyosmani.github.com/basket.js
 * (c) Addy Osmani;  License
 * Created by: Addy Osmani, Sindre Sorhus, Andrée Hansson, Mat Scales
@@ -18,7 +18,7 @@
     // 'use strict';
 
     // var head = document.head || document.getElementsByTagName('head')[0];
-    var body = document.body || document.getElementsByTagName('body')[0];
+    // var body = document.body || document.getElementsByTagName('body')[0];
     var storagePrefix = 'BB-'; // 保存localStorage时的前缀
     // var defaultExpiration = 5000; // 默认过期时间为5000小时
     var inBasket = [];
@@ -359,8 +359,6 @@
 
         obj.key =  ( obj.key || obj.url );
 
-        console.log('load start:' + performance.now());   
-        window.loadStart = performance.now();   
         source = basket.get( obj.key );
         // obj.execute = obj.execute !== false;
 
@@ -381,9 +379,6 @@
                 resolve( source );
             });
         }
-        // injectScript( source );
-        window.loadEnd = performance.now();   
-        console.log('load end:' + performance.now());            
         return promise;
     };
 
@@ -392,15 +387,17 @@
      * @param {object} obj 缓存对象
      */
     var injectScript = function( obj ) {
-        var script = document.createElement('script');
+        var execute = new Function( obj.data );
+        execute();
+        // var script = document.createElement('script');
 
         // script.defer = true;
         // Have to use .text, since we support IE8,
         // which won't allow appending to a script
-        script.text = obj.data;
+        // script.text = obj.data;
+        // script.type = "text/javascript"; 
         // head.appendChild( script );
-        console.log('append script:' + performance.now());            
-        body.appendChild( script );
+        // body.appendChild( script );
     };
 
     /**
@@ -439,14 +436,14 @@
      * @returns {Array}            返回参数resources
      */
     var performActions = function( resources ) {
-        return resources.map( function( obj ) {
+        // return resources.map( function( obj ) {
+        resources.map( function( obj ) {
             // if( obj.execute ) {
-                console.log('执行插入缓存js:' + performance.now());
                 // execute( obj );
                 // handlers['default']( obj )
                 injectScript( obj );
             // }
-            return obj;
+            // return obj;
         } );
     };
 
@@ -456,6 +453,7 @@
      * @returns {object}   promise对象
      */
     var fetch = function() {
+        
         var i, l, promises = [];
 
         for ( i = 0, l = arguments.length; i < l; i++ ) {
@@ -497,10 +495,11 @@
                     inBasket.push(arguments[0].url);
                 }
             }
-            var promise = fetch.apply( null, arguments ).then( performActions );
+            // var promise = fetch.apply( null, arguments ).then( performActions );
+            fetch.apply( null, arguments ).then( performActions );
 
             // promise.thenRequire = thenRequire;
-            return promise;
+            // return promise;
         },
 
         remove: function( key ) {
